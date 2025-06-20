@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<flow name="spsmarketingapiFlow" doc:id="1069d36c-246c-4fac-88f5-b3f6d85088ea" >
+		<http:listener doc:name="GET Customers" doc:id="82bbfef5-e59f-41cd-9a8c-9e54b0caa570" config-ref="HTTP_Listener_spsmarketingv1" path="/customers" allowedMethods="GET" responseStreamingMode="NEVER">
+			<http:error-response statusCode="#[vars.httpStatus default 500]">
+				<http:body ><![CDATA[#[payload]]]></http:body>
+			</http:error-response>
+		</http:listener>
+		<logger level="INFO" doc:name="Requests Logger" doc:id="f7303707-7264-49de-8424-13d787b11704" message="Receiving new request to /customers with page_limit=#[attributes.queryParams.page_size default 'not provided'] and page_number=#[attributes.queryParams.page_number default 'not provided']"/>
+		<choice doc:name="Validate Query parameters" doc:id="cd1a2613-6aac-4c3a-8958-f897f1f50ff5" >
+			<when expression='#[(attributes.queryParams.page_size default null) != null and (&#10;  !((attributes.queryParams.page_size default "") matches /^[0-9]+$/) or&#10;  (attributes.queryParams.page_size as Number) &lt;= 0 or&#10;  (attributes.queryParams.page_size as Number) &gt; 50&#10;)]'>
+				<raise-error doc:name="Raise page_size format error" doc:id="7098f9a2-b526-414f-a588-2ef6572e7858" type="CUSTOM:QUERY_PARAM_FORMAT" description="The query parameter page_size must be an integer between 0 and 50"/>
+			</when>
+			<when expression='#[(attributes.queryParams.page_number default null) != null and (&#10;  !((attributes.queryParams.page_number default "") matches /^[0-9]+$/) or&#10;  (attributes.queryParams.page_number as Number) &lt;= 0&#10;)]'>
+				<raise-error doc:name="Raise page_number format error" doc:id="69cb4fb2-664b-4163-91ea-f9f50e46e556" type="CUSTOM:QUERY_PARAM_FORMAT" description="The query parameter page_number must be an integer greater than 0"/>
+			</when>
+			<otherwise >
+				<db:select doc:name="Select Customers" doc:id="3d500618-a901-4b2c-9791-9bb57d661ad7" config-ref="Database_Config">
+			<db:sql><![CDATA[SELECT * FROM customers
+LIMIT :page_size
+OFFSET :page_number]]></db:sql>
+			<db:parameter-types />
+			<db:input-parameters><![CDATA[#[{
+  page_size: (attributes.queryParams.page_size default "50") as Number,
+  page_number: ((attributes.queryParams.page_number default "1") as Number - 1) * ((attributes.queryParams.page_size default "50") as Number)
+}]]]></db:input-parameters>
+		</db:select>
+				<ee:transform doc:name="Transform Message" doc:id="cd9fef36-1333-42b3-ad65-23dd4bd63b5e">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+			</otherwise>
+		</choice>
+		<error-handler >
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="33b0d49b-b1de-41cf-afe8-4259bef36889" type="CUSTOM:QUERY_PARAM_FORMAT">
+				<set-variable value="400" variableName="httpStatus" doc:name="Set status code 400" />
+				<ee:transform doc:name="Transform Message" doc:id="08db75e7-f495-4b7e-8c94-4179f863ae72" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+						output application/json
+						---
+						{
+							message: error.description
+						}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</on-error-propagate>
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="57c0c486-9e53-4cd5-982d-8e97c8eff9eb" >
+				<logger level="ERROR" doc:name="Internal Error Logger" doc:id="d2084db9-c52f-498b-b266-5f5efeca2313" message="#[error.description]" />
+				<ee:transform doc:name="Transform Message" doc:id="edf77911-58f1-483f-a3cc-b3a11a307102" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	message: "Server out of service, try again later"
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+</mule>
